@@ -9,10 +9,11 @@ import { es } from "./es";
 import { id } from "./id";
 import { it } from "./it";
 import { tr } from "./tr";
+import { zh } from "./zh";
 
 /**
  * The languages of the UI: the text of each, and the tag its dates and numbers are formatted by (see `format.ts`).
- * English takes British conventions, as FM is British.
+ * English takes British conventions, as FM is British, and Chinese the ones of the mainland (simplified).
  */
 const LANGUAGES = {
   en: { strings: en, intl: "en-GB" },
@@ -20,6 +21,7 @@ const LANGUAGES = {
   es: { strings: es, intl: "es-ES" },
   id: { strings: id, intl: "id-ID" },
   it: { strings: it, intl: "it-IT" },
+  zh: { strings: zh, intl: "zh-CN" },
 } satisfies Record<string, { strings: Strings; intl: string }>;
 
 export type Locale = keyof typeof LANGUAGES;

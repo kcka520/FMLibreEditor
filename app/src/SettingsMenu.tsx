@@ -16,9 +16,10 @@ const GAP = 4;
 
 /**
  * The flag of each language, in a box of 3:2: the Union Jack for English, as FM is British (cut to 3:2 at the sides,
- * as flag sets do), and the flags of Turkey, Spain, Indonesia and Italy whole. Spain's is drawn without the coat of
- * arms, as its civil flag is: at this size the arms would be a smudge. Indonesia's is 2:3 in law; drawn at 3:2 like the
- * others. Italy's is the tricolour, three vertical bands.
+ * as flag sets do), and the flags of Turkey, Spain, Indonesia, Italy and China whole. Spain's is drawn without the
+ * coat of arms, as its civil flag is: at this size the arms would be a smudge. Indonesia's is 2:3 in law; drawn at
+ * 3:2 like the others. Italy's is the tricolour, three vertical bands. China's keeps only its large star, as flag
+ * sets draw it.
  */
 const FLAGS: Record<Locale, ReactNode> = {
   en: (
@@ -61,6 +62,18 @@ const FLAGS: Record<Locale, ReactNode> = {
       <rect x="2" width="1" height="2" fill="#ce2b37" shapeRendering="crispEdges" />
     </svg>
   ),
+  zh: (
+    <svg className="language-flag" viewBox="0 0 30 20" aria-hidden="true">
+      <rect width="30" height="20" fill="#de2910" />
+      <g fill="#ffde00">
+        <path d="M5 3.27l0.95 2.92h3.07l-2.49 1.81 0.95 2.92L5 9.11 2.52 10.92l0.95-2.92L0.98 6.19h3.07z" />
+        <path d="M11.03 4.64l0.68 2.1h2.2l-1.78 1.3 0.68 2.1-1.78-1.3-1.78 1.3 0.68-2.1-1.78-1.3h2.2z" />
+        <path d="M14.67 1.64l0.68 2.1h2.2l-1.78 1.3 0.68 2.1-1.78-1.3-1.78 1.3 0.68-2.1-1.78-1.3h2.2z" />
+        <path d="M14.67 7.67l0.68 2.1h2.2l-1.78 1.3 0.68 2.1-1.78-1.3-1.78 1.3 0.68-2.1-1.78-1.3h2.2z" />
+        <path d="M11.03 10.67l0.68 2.1h2.2l-1.78 1.3 0.68 2.1-1.78-1.3-1.78 1.3 0.68-2.1-1.78-1.3h2.2z" />
+      </g>
+    </svg>
+  ),
 };
 
 /** The languages on offer, in the order of the menu, each with its own name. */
@@ -70,6 +83,7 @@ const LANGUAGES: readonly { id: Locale; name: string }[] = [
   { id: "es", name: "Español" },
   { id: "id", name: "Bahasa Indonesia" },
   { id: "it", name: "Italiano" },
+  { id: "zh", name: "简体中文" },
 ];
 
 /** The name and hover text of the button: "Settings: English, Euro". */
