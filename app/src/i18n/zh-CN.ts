@@ -1,4 +1,4 @@
-﻿// 简体中文界面文本：与 `en.ts` 同构（键缺失或多余都会让构建失败），采用中国大陆的日期与数字习惯（见 `index.ts`）。
+// 简体中文界面文本：与 `en.ts` 同构（键缺失或多余都会让构建失败），采用中国大陆的日期与数字习惯（见 `index.ts`）。
 // 中文名词不分单复数，所以带计数的句子不区分"1 个"和"多个"——同一中文形式复用。
 
 import type {
@@ -51,10 +51,10 @@ const CONTRACT_TYPES: Partial<Record<number, string>> = {
   4: "无合同", 10: "最低薪水合同", 11: "高级合同",
 };
 
-const field = (key: string | undefined) => fieldName(zh, key ?? "");
+const field = (key: string | undefined) => fieldName(zhCN, key ?? "");
 
 const checkName = (key: string | undefined) => {
-  const name = (zh.checks as Partial<Record<string, string>>)[key ?? ""] ?? key ?? "";
+  const name = (zhCN.checks as Partial<Record<string, string>>)[key ?? ""] ?? key ?? "";
   return name;
 };
 
@@ -72,7 +72,7 @@ const STAFF_DEPARTMENTS: Partial<Record<string, string>> = {
 const recordNoun = (entity: string | undefined) =>
   entity === "player" || entity === "staff" || entity === "club" ? entityNouns[entity as Entity] : "记录";
 const jobName = (code: string | undefined) =>
-  (zh.jobs as Partial<Record<number, string>>)[Number(code)] ?? code;
+  (zhCN.jobs as Partial<Record<number, string>>)[Number(code)] ?? code;
 
 const CLAUSE_NAMES_ZH: Partial<Record<number, string>> = {
   0: "最低解约金条款", 1: "降级解约金条款", 2: "未升级解约金条款",
@@ -232,7 +232,7 @@ const errors: ErrorTexts = {
   "mass.outOfDate": () => "预览后数据又变了，请重新预览。",
 };
 
-export const zh: Strings = {
+export const zhCN: Strings = {
   attributes: {
     corners: "角球", crossing: "传中", dribbling: "盘带", finishing: "射门",
     first_touch: "停球", free_kicks: "任意球", heading: "头球", long_shots: "远射",
