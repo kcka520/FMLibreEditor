@@ -15,9 +15,10 @@ use fmlibre_core::{
     ATTRIBUTE_GROUPS, ArrayCandidate, ArrayRvas, ArraySource, AttributeBound, BuildProfile, Buyer, CaptainRole,
     ClubIndex, Entity, ExportFormat, ExportHeader, Exported, Field, FmDate, Found, GAME_EXE, GAME_PLUGIN, GameInfo,
     GraphicsIndex, Kind, Loan, MANAGER, MoveTerms, PERSONALITY, POSITIONS, Picture, PlayerFilter, PlayerIndex,
-    PlayerOrder, PlayerSort, ProfileNotes, Purpose, STAFF_ATTRIBUTE_GROUPS, SUPPORTER_MIX, SUPPORTER_TRAITS, Scale,
-    ScanOptions, ScoutOrder, ScoutRequest, Session, SessionError, StaffIndex, Target, Tie, TieTarget, find_game,
-    job_name, nations, profile_text, scan_object_arrays, sort_players,
+    PlayerOrder, PlayerSort, PrizeAmount, PrizeMoney, PrizeStage, ProfileNotes, Purpose, STAFF_ATTRIBUTE_GROUPS,
+    SUPPORTER_MIX, SUPPORTER_TRAITS, Scale, ScanOptions, ScoutOrder, ScoutRequest, Session, SessionError, StaffIndex,
+    Target, Tie, TieTarget, date_line, diagnostics_report, find_game, job_name, nations, profile_text, retirement_line,
+    scan_object_arrays, sort_players,
 };
 #[cfg(target_os = "macos")]
 use fmlibre_mem::MachImage;
@@ -77,6 +78,9 @@ enum Command {
     Info,
     /// Run the checks the editor makes before it writes, and show what each found.
     Health,
+    /// Print the report the app's Copy diagnostics copies for a bug report: the game and its build, where its data was
+    /// found, and what the checks found. It holds no names or paths.
+    Diagnostics,
     /// Identify the build and locate the player, staff and club arrays, the in-game date and the retirement manager.
     Calibrate {
         /// Ignore the build profile and look for everything, as for an unknown build.
@@ -287,6 +291,37 @@ enum Command {
         #[arg(long)]
         restore: bool,
         /// With --restore, how many seconds to wait before putting it back, to look at the game meanwhile.
+        #[arg(long, default_value_t = 0)]
+        hold: u64,
+    },
+    /// Show the prize money competitions pay by final position and per match, as the settings of their stages hold
+    /// it, optionally only for those matching TEXT. With --place, --win, --draw or --loss, change it in the running
+    /// game, in each settings of the one competition TEXT names, to see whether the game pays what they say.
+    Prizes {
+        /// Words to look for in the competitions' names (accents and case are ignored), or a competition's UID.
+        text: Option<String>,
+        /// Only the settings at this address, as listed: for one of a competition's groups.
+        #[arg(long, value_name = "ADDR")]
+        settings: Option<String>,
+        /// Change what a final position pays (1 for the first place) to AMOUNT pounds; may be given more than once.
+        #[arg(long, num_args = 2, value_names = ["POSITION", "AMOUNT"])]
+        place: Option<Vec<u32>>,
+        /// Change what a win pays to AMOUNT pounds (both of the words the game keeps for it).
+        #[arg(long, value_name = "AMOUNT")]
+        win: Option<u32>,
+        /// Change what a draw pays to AMOUNT pounds.
+        #[arg(long, value_name = "AMOUNT")]
+        draw: Option<u32>,
+        /// Change what a loss pays to AMOUNT pounds.
+        #[arg(long, value_name = "AMOUNT")]
+        loss: Option<u32>,
+        /// Also list the settings that pay nothing, and those no stage holds.
+        #[arg(long)]
+        all: bool,
+        /// Put the amounts back afterwards and check them: tests the change without changing the save.
+        #[arg(long)]
+        restore: bool,
+        /// With --restore, how many seconds to wait before putting them back, to look at the game meanwhile.
         #[arg(long, default_value_t = 0)]
         hold: u64,
     },
@@ -718,6 +753,30 @@ enum Command {
         #[arg(long, default_value_t = 0.6)]
         tolerance: f64,
     },
+    /// Show, for each senior player of a club, the value FM27 Editor (Jackhamerp24's, GPL-3.0) edits as team
+    /// cohesion: his entry for the club in the second list of the record his `relations` pointer leads to. The places
+    /// are the layout's `[cohesion]`, or those given for a layout without it: where they do not hold, it says where
+    /// the squad's lists name a club in common. (What FM27 Editor edits as tactical familiarity, player +0x190 on
+    /// Windows, is his versatility.) With --set, it sets the cohesion of the club's senior players: this writes.
+    Cohesion {
+        /// The UIDs of the clubs; give several to compare them.
+        #[arg(required = true)]
+        clubs: Vec<u32>,
+        /// Where the list of cohesion entries starts in the record of relations: the layout's, else 0x18.
+        #[arg(long, conflicts_with = "set")]
+        list: Option<String>,
+        /// Where the club keeps the `i32` index its cohesion entries name it by: the layout's, else 0x8.
+        #[arg(long, conflicts_with = "set")]
+        club_index: Option<String>,
+        /// Also print each list's entries as stored.
+        #[arg(long)]
+        raw: bool,
+        /// Set to this, 1..100, the cohesion of each senior player who has an entry for the club; one club only.
+        #[arg(long, value_parser = clap::value_parser!(i8).range(1..=100))]
+        set: Option<i8>,
+        #[command(flatten)]
+        restore: RestoreArgs,
+    },
     /// Find where clubs or players keep a value in records that point back at them: every pointer to
     /// each club's senior team (or club, with --to-club), or to each player's object or person block,
     /// is found in memory, and the bytes around it are compared, at the same distance from the
@@ -1004,6 +1063,10 @@ fn run(cli: Cli) -> Result<()> {
                 | Command::Move { .. }
                 | Command::Permanent { .. }
                 | Command::StadiumName { name: Some(_), .. }
+                | Command::Prizes { place: Some(_), .. }
+                | Command::Prizes { win: Some(_), .. }
+                | Command::Prizes { draw: Some(_), .. }
+                | Command::Prizes { loss: Some(_), .. }
                 | Command::Release { .. }
                 | Command::StaffMove { .. }
                 | Command::StaffJob { .. }
@@ -1019,6 +1082,7 @@ fn run(cli: Cli) -> Result<()> {
                 | Command::TieRemove { .. }
                 | Command::TieAdd { .. }
                 | Command::Captain { .. }
+                | Command::Cohesion { set: Some(_), .. }
         )
     );
     let process = attach(cli.pid, elevated, writes)?;
@@ -1040,6 +1104,10 @@ fn run(cli: Cli) -> Result<()> {
             info(&process, &game, &modules, elevated, json)
         }
         Command::Health => health(&connect(process, ArraySource::ProfileFirst)?),
+        Command::Diagnostics => {
+            print!("{}", diagnostics_report(&connect(process, ArraySource::ProfileFirst)?, env!("CARGO_PKG_VERSION")));
+            Ok(())
+        }
         Command::Calibrate { scan } => {
             let source = if scan { ArraySource::ScanOnly } else { ArraySource::ProfileFirst };
             calibrate(&connect(process, source)?)
@@ -1101,6 +1169,19 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::StadiumName { club, name, restore, hold } => {
             stadium_name(&connect(process, ArraySource::ProfileFirst)?, club, name.as_deref(), restore.then_some(hold))
+        }
+        Command::Prizes { text, settings, place, win, draw, loss, all, restore, hold } => {
+            let mut amounts: Vec<(PrizeAmount, u32)> = place
+                .unwrap_or_default()
+                .chunks(2)
+                .map(|pair| (PrizeAmount::Place(pair[0] as usize), pair[1]))
+                .collect();
+            amounts.extend(win.map(|amount| (PrizeAmount::Win, amount)));
+            amounts.extend(draw.map(|amount| (PrizeAmount::Draw, amount)));
+            amounts.extend(loss.map(|amount| (PrizeAmount::Loss, amount)));
+            let settings = settings.as_deref().map(parse_hex).transpose()?;
+            let session = connect(process, ArraySource::ProfileFirst)?;
+            prizes(&session, text.as_deref(), settings, &amounts, all, restore.then_some(hold))
         }
         Command::Plan { uid, club, release } => {
             plan_move(&connect(process, ArraySource::ProfileFirst)?, uid, club, release)
@@ -1249,6 +1330,23 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::TeamAverage { clubs, tolerance } => {
             team_average(&connect(process, ArraySource::ProfileFirst)?, &clubs, tolerance)
+        }
+        Command::Cohesion { clubs, list, club_index, raw, set, restore } => {
+            let session = connect(process, ArraySource::ProfileFirst)?;
+            let layout = session.layout.cohesion.as_ref();
+            let place = |given: Option<String>, laid: Option<u64>, otherwise: u64| -> Result<u64> {
+                Ok(given.as_deref().map(parse_hex).transpose()?.or(laid).unwrap_or(otherwise))
+            };
+            let places = CohesionPlaces {
+                list: place(list, layout.map(|c| c.list), 0x18)?,
+                club_index: place(club_index, layout.map(|c| c.club_index), 0x8)?,
+                raw,
+            };
+            cohesion(&session, &clubs, &places)?;
+            match set {
+                Some(value) => set_cohesion(&session, &clubs, value, restore),
+                None => Ok(()),
+            }
         }
         Command::Nearby { clubs, players, to_club, window, tolerance, per_kind, bare, by_uid } => {
             let session = connect(process, ArraySource::ProfileFirst)?;
@@ -2876,27 +2974,7 @@ fn health(session: &Session) -> Result<()> {
 
 fn print_checks(health: &fmlibre_core::Health) {
     for result in &health.results {
-        let verdict = if result.passed { "pass" } else { "FAIL" };
-        let note = if result.note.is_empty() { String::new() } else { format!("; {}", result.note) };
-        println!("  {verdict}  {:<12} {:>5} of {:>5} fit{note}", result.check.key(), result.fit, result.sampled);
-    }
-}
-
-/// The in-game date, where it was read and how that place was found.
-fn date_line(session: &Session) -> String {
-    match session.date_place() {
-        Some(place) => {
-            format!("{} ({GAME_PLUGIN}+{:#x}, {})", iso_date(session.game_date()), place.rva, place.found.describe())
-        }
-        None => "- (see the gameDate check of `health`)".to_owned(),
-    }
-}
-
-/// Where the static pointer to the retirement manager is, and how it was found.
-fn retirement_line(session: &Session) -> String {
-    match session.retirement_place() {
-        Some(place) => format!("{GAME_PLUGIN}+{:#x} ({})", place.rva, place.found.describe()),
-        None => "not found".to_owned(),
+        println!("  {result}");
     }
 }
 
@@ -2913,19 +2991,8 @@ fn calibrate(session: &Session) -> Result<()> {
 }
 
 fn print_arrays(session: &Session) {
-    let source = if session.arrays.from_profile { "from the build profile, checked" } else { "found by scanning" };
-    println!("Entity arrays ({source}):");
-    let arrays = &session.arrays;
-    for (label, array) in [("players", &arrays.players), ("staff", &arrays.staff), ("clubs", &arrays.clubs)] {
-        match array {
-            Some(a) => println!(
-                "  {label:<8} {GAME_PLUGIN}+{:#x}  {:>7} elements  {:>3.0}% of samples decoded",
-                a.pair_rva,
-                a.count,
-                a.confidence * 100.0
-            ),
-            None => println!("  {label:<8} not found"),
-        }
+    for line in session.arrays.describe() {
+        println!("{line}");
     }
 }
 
@@ -4516,6 +4583,188 @@ fn stadium_name(session: &Session, club: Option<u32>, name: Option<&str>, restor
         show("restored")?;
     }
     Ok(())
+}
+
+/// Lists the prize money the competitions matching `text` (or the settings at `settings`) pay, and changes `amounts` in
+/// each settings of the one competition they name.
+fn prizes(
+    session: &Session,
+    text: Option<&str>,
+    settings: Option<u64>,
+    amounts: &[(PrizeAmount, u32)],
+    all: bool,
+    restore: Option<u64>,
+) -> Result<()> {
+    let started = Instant::now();
+    let found = session.prize_money()?;
+    let count = |stage: PrizeStage| found.iter().filter(|prize| prize.stage == stage).count();
+    println!(
+        "{} league settings: {} of a stage being played or played, {} of one not started yet, {} held by no stage; {} \
+         pay something (read in {:.1} s)",
+        found.len(),
+        count(PrizeStage::Started),
+        count(PrizeStage::Future),
+        count(PrizeStage::Unheld),
+        found.iter().filter(|prize| prize.pays()).count(),
+        started.elapsed().as_secs_f64()
+    );
+    let uid = text.and_then(|text| text.trim().parse::<u32>().ok());
+    let words: Vec<String> =
+        text.map(fmlibre_core::fold).unwrap_or_default().split_whitespace().map(str::to_owned).collect();
+    let wanted = |prize: &PrizeMoney| match (settings, &prize.competition) {
+        (Some(address), _) => prize.settings == address,
+        (None, Some(competition)) => match uid {
+            Some(uid) => competition.uid == uid,
+            None => {
+                let short = competition.short_name.as_deref().unwrap_or_default();
+                let names = fmlibre_core::fold(&format!("{} {short}", competition.name));
+                words.iter().all(|word| names.contains(word.as_str()))
+            }
+        },
+        (None, None) => text.is_none(),
+    };
+    let held = |prize: &PrizeMoney| prize.stage != PrizeStage::Unheld;
+    let rank = |stage: PrizeStage| match stage {
+        PrizeStage::Started => 0,
+        PrizeStage::Future => 1,
+        PrizeStage::Unheld => 2,
+    };
+    let mut shown: Vec<&PrizeMoney> =
+        found.iter().filter(|prize| wanted(prize) && (all || (prize.pays() && held(prize)))).collect();
+    shown.sort_by_cached_key(|prize| {
+        (prize.competition.as_ref().map(|c| fmlibre_core::fold(&c.name)), rank(prize.stage), prize.settings)
+    });
+    // A competition's groups often pay alike: one entry for them all.
+    let mut groups: Vec<(&PrizeMoney, Vec<u64>)> = Vec::new();
+    for prize in shown {
+        let alike = |other: &PrizeMoney| {
+            other.competition == prize.competition
+                && other.stage == prize.stage
+                && other.by_position == prize.by_position
+                && (other.win, other.win_again, other.draw, other.loss)
+                    == (prize.win, prize.win_again, prize.draw, prize.loss)
+        };
+        match groups.iter_mut().find(|(first, _)| alike(first)) {
+            Some((_, addresses)) => addresses.push(prize.settings),
+            None => groups.push((prize, vec![prize.settings])),
+        }
+    }
+    for (prize, addresses) in &groups {
+        print_prize_money(prize, addresses);
+    }
+    if groups.is_empty() {
+        let hint = if all { "" } else { " (--all also lists those that pay nothing, or that no stage holds)" };
+        println!("No settings match{hint}");
+    }
+    if amounts.is_empty() {
+        return Ok(());
+    }
+
+    ensure!(text.is_some() || settings.is_some(), "name the competition to change, or its settings (--settings)");
+    let targets: Vec<&PrizeMoney> = found.iter().filter(|prize| wanted(prize) && held(prize)).collect();
+    ensure!(!targets.is_empty(), "no settings that a stage holds match, so nothing was changed");
+    let mut names: Vec<String> = targets
+        .iter()
+        .map(|prize| {
+            prize
+                .competition
+                .as_ref()
+                .map_or_else(|| "no competition".to_owned(), |c| format!("{} (UID {})", c.name, c.uid))
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    ensure!(
+        names.len() == 1,
+        "{} competitions match ({}): name one by its UID, or its settings with --settings",
+        names.len(),
+        names.join("; ")
+    );
+    let plan = session.plan_prize_change(&targets, amounts)?;
+    let done = session.apply_prize_change(&plan)?;
+    println!();
+    println!("Changed in the running game, {}:", names[0]);
+    for edit in &done.edits {
+        println!("  settings {:#x}, {}: {} -> {}", edit.settings, edit.amount, pounds(edit.from), pounds(edit.to));
+    }
+    match restore {
+        Some(hold) => {
+            if hold > 0 {
+                println!("  putting them back in {hold} s");
+                std::thread::sleep(std::time::Duration::from_secs(hold));
+            }
+            session.undo_prize_change(&done)?;
+            println!("Put back, and read back.");
+        }
+        None => {
+            let mut by_settings: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+            for edit in &done.edits {
+                let arg = match edit.amount {
+                    PrizeAmount::Place(place) => format!("--place {place} {}", edit.from),
+                    PrizeAmount::Win => format!("--win {}", edit.from),
+                    PrizeAmount::Draw => format!("--draw {}", edit.from),
+                    PrizeAmount::Loss => format!("--loss {}", edit.from),
+                };
+                by_settings.entry(edit.settings).or_default().push(arg);
+            }
+            println!("To put it back while the game still holds these settings:");
+            for (address, args) in by_settings {
+                println!("  fmlibre-probe prizes --settings {address:#x} {}", args.join(" "));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One entry of `prizes`: the competition, the stage, the settings that pay alike and what they pay.
+fn print_prize_money(prize: &PrizeMoney, addresses: &[u64]) {
+    let competition = match &prize.competition {
+        Some(c) => {
+            let short = c.short_name.as_deref().filter(|short| *short != c.name).map(|short| format!(", {short}"));
+            format!("{} (UID {}{})", c.name, c.uid, short.unwrap_or_default())
+        }
+        None => "No competition".to_owned(),
+    };
+    let stage = match prize.stage {
+        PrizeStage::Started => "a stage being played or played",
+        PrizeStage::Future => "a stage not started yet",
+        PrizeStage::Unheld => "held by no stage",
+    };
+    let at: Vec<String> = addresses.iter().map(|address| format!("{address:#x}")).collect();
+    let settings = match at.as_slice() {
+        [one] => format!("settings {one}"),
+        _ => format!("{} settings alike: {}", at.len(), at.join(" ")),
+    };
+    println!("{competition} · {stage} · {settings}");
+    if !prize.by_position.is_empty() {
+        println!("  by position, {} places:", prize.by_position.len());
+        for (row, amounts) in prize.by_position.chunks(6).enumerate() {
+            let cells: Vec<String> = amounts
+                .iter()
+                .enumerate()
+                .map(|(i, &amount)| format!("{:>3}. {:>11}", row * 6 + i + 1, pounds(amount)))
+                .collect();
+            println!("   {}", cells.join("  "));
+        }
+    }
+    let win = match prize.win_again == prize.win {
+        true => pounds(prize.win),
+        false => format!("{} and {}", pounds(prize.win), pounds(prize.win_again)),
+    };
+    println!("  per match: win {win}, draw {}, loss {}", pounds(prize.draw), pounds(prize.loss));
+}
+
+/// An amount with commas between thousands: 10,222,480.
+fn pounds(amount: u32) -> String {
+    let digits = amount.to_string();
+    let mut text = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
 }
 
 fn plan_move(session: &Session, uid: u32, club: u32, release: Option<u32>) -> Result<()> {
@@ -6120,6 +6369,256 @@ fn team_average(session: &Session, clubs: &[(u32, f64)], tolerance: f64) -> Resu
     Ok(())
 }
 
+/// The bytes of one entry of the list `cohesion` reads: the `i32` index of a club or a nation, a `u8` kind, the `i8`
+/// value, and two bytes FM27 Editor leaves alone.
+const COHESION_ENTRY: usize = 8;
+/// The kind of entry that names a club; one of kind 2 names a nation.
+const COHESION_CLUB: u8 = 1;
+/// The longest list `cohesion` reads, as FM27 Editor.
+const MOST_COHESION_ENTRIES: u64 = 500;
+/// How much of a club object `cohesion` looks through for the index the squad's lists name in common.
+const CLUB_SPAN: usize = 0x100;
+
+/// One entry of a player's list of cohesion entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CohesionEntry {
+    index: i32,
+    kind: u8,
+    value: i8,
+}
+
+/// The entries of a list of cohesion entries, from its bytes.
+fn cohesion_entries(bytes: &[u8]) -> Vec<CohesionEntry> {
+    let (entries, _) = bytes.as_chunks::<COHESION_ENTRY>();
+    entries
+        .iter()
+        .map(|entry| CohesionEntry {
+            index: i32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]),
+            kind: entry[4],
+            value: i8::from_le_bytes([entry[5]]),
+        })
+        .collect()
+}
+
+/// Whether the words `begin`, `end` and `capacity` look like those of a list of cohesion entries, or of an empty one.
+fn is_cohesion_list(begin: u64, end: u64, capacity: u64) -> bool {
+    let size = COHESION_ENTRY as u64;
+    (begin == 0 && end == 0 && capacity == 0)
+        || (is_user_pointer(begin)
+            && begin <= end
+            && end <= capacity
+            && (end - begin).is_multiple_of(size)
+            && (capacity - begin).is_multiple_of(size)
+            && (end - begin) / size <= MOST_COHESION_ENTRIES)
+}
+
+/// What `cohesion` found in a player's record of relations.
+enum CohesionList {
+    /// He has no record of relations.
+    NoRecord,
+    /// The record, at this address, holds no list at the place given: its three words there.
+    NotAList(u64, [u64; 3]),
+    /// The list's entries, and its bytes.
+    Entries(Vec<CohesionEntry>, Vec<u8>),
+}
+
+fn cohesion_list(session: &Session, player: &fmlibre_core::PlayerSummary, list: u64) -> Result<CohesionList> {
+    let (process, p) = (&session.process, &session.layout.player);
+    let record = process.read_u64(player.address + p.at(p.relations, player.shift))?;
+    if !is_user_pointer(record) {
+        return Ok(CohesionList::NoRecord);
+    }
+    let words = process.read_bytes(record + list, 24)?;
+    let word = |i: usize| u64::from_le_bytes(words[i * 8..i * 8 + 8].try_into().expect("8 bytes"));
+    let (begin, end, capacity) = (word(0), word(1), word(2));
+    if !is_cohesion_list(begin, end, capacity) {
+        return Ok(CohesionList::NotAList(record, [begin, end, capacity]));
+    }
+    let bytes = if end > begin { process.read_bytes(begin, (end - begin) as usize)? } else { Vec::new() };
+    Ok(CohesionList::Entries(cohesion_entries(&bytes), bytes))
+}
+
+/// Where `cohesion` reads; see the command's options.
+struct CohesionPlaces {
+    list: u64,
+    club_index: u64,
+    raw: bool,
+}
+
+/// The index of a club in most lists of a squad, and how many lists name it, from how many lists name each index.
+fn most_named(named: &BTreeMap<i32, usize>) -> Option<(i32, usize)> {
+    named.iter().map(|(&index, &count)| (index, count)).max_by_key(|&(index, count)| (count, std::cmp::Reverse(index)))
+}
+
+fn cohesion(session: &Session, clubs: &[u32], places: &CohesionPlaces) -> Result<()> {
+    let process = &session.process;
+    let players = PlayerIndex::new(session.players()?);
+    let index = ClubIndex::new(session.clubs()?);
+    println!(
+        "Cohesion: the list at +{:#x} of each player's record of relations, the club's index at +{:#x}.",
+        places.list, places.club_index
+    );
+    for &uid in clubs {
+        let club = index.get(uid).with_context(|| format!("no club with UID {uid}"))?;
+        let club_bytes = process.read_bytes(club.address, CLUB_SPAN)?;
+        let at = places.club_index as usize;
+        ensure!(at + 4 <= CLUB_SPAN, "--club-index is past the first {CLUB_SPAN:#x} bytes of the club");
+        let own = i32::from_le_bytes(club_bytes[at..at + 4].try_into().expect("4 bytes"));
+        let team = session.club_teams(club, &players)?.into_iter().next().context("the club has no team")?;
+        let squad: Vec<_> = team
+            .players
+            .iter()
+            .filter(|member| member.plays_here)
+            .filter_map(|member| players.get(member.uid))
+            .collect();
+        println!();
+        println!("{} ({uid}): index {own} ({own:#x}), {} senior players", club.name, squad.len());
+        println!("  {:>10}  {:<28}  cohesion  other entries", "UID", "player");
+        let (mut cohesions, mut without) = (Vec::new(), 0);
+        // For each index of a club, how many of the squad's lists name it: the club's own should be in almost all.
+        let mut named: BTreeMap<i32, usize> = BTreeMap::new();
+        let mut not_lists = Vec::new();
+        for player in &squad {
+            let mut raw = None;
+            let (cohesion, others) = match cohesion_list(session, player, places.list)? {
+                CohesionList::NoRecord => ("none".to_owned(), "no record of relations".to_owned()),
+                CohesionList::NotAList(record, words) => {
+                    not_lists.push((player.uid, record, words));
+                    ("?".to_owned(), "no list there".to_owned())
+                }
+                CohesionList::Entries(entries, bytes) => {
+                    let mut clubs_named: Vec<i32> =
+                        entries.iter().filter(|e| e.kind == COHESION_CLUB).map(|e| e.index).collect();
+                    clubs_named.sort_unstable();
+                    clubs_named.dedup();
+                    for index in clubs_named {
+                        *named.entry(index).or_default() += 1;
+                    }
+                    let own_entry = entries.iter().position(|e| e.kind == COHESION_CLUB && e.index == own);
+                    let others: Vec<String> = entries
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, _)| Some(i) != own_entry)
+                        .map(|(_, e)| format!("kind {} #{} = {}", e.kind, e.index, e.value))
+                        .collect();
+                    raw = Some(bytes);
+                    let cohesion = match own_entry.map(|i| entries[i].value) {
+                        Some(value) => {
+                            cohesions.push(value);
+                            value.to_string()
+                        }
+                        None => {
+                            without += 1;
+                            "-".to_owned()
+                        }
+                    };
+                    (cohesion, others.join(", "))
+                }
+            };
+            println!("  {:>10}  {:<28}  {cohesion:>8}  {others}", player.uid, clip(&player.name, 28));
+            if let Some(bytes) = raw.filter(|bytes| places.raw && !bytes.is_empty()) {
+                println!("  {:>42}{}", "", hex(&bytes));
+            }
+        }
+        if cohesions.is_empty() {
+            println!("  Cohesion: no list names the club by index {own}.");
+        } else {
+            let mean = cohesions.iter().map(|&value| f64::from(value)).sum::<f64>() / cohesions.len() as f64;
+            let (low, high) = (cohesions.iter().min().expect("one"), cohesions.iter().max().expect("one"));
+            println!(
+                "  Cohesion with the club: mean {mean:.1}, from {low} to {high}, over {} players; {without} without an \
+                 entry for it.",
+                cohesions.len()
+            );
+        }
+        // Where most of the squad's lists name another club than the index read, that is likely the club's index.
+        if let Some((common, count)) = most_named(&named).filter(|&(common, _)| common != own) {
+            let held: Vec<String> = (0..=CLUB_SPAN - 4)
+                .step_by(4)
+                .filter(|&at| i32::from_le_bytes(club_bytes[at..at + 4].try_into().expect("4 bytes")) == common)
+                .map(|at| format!("+{at:#x}"))
+                .collect();
+            let held = if held.is_empty() {
+                format!("the club holds it nowhere in its first {CLUB_SPAN:#x} bytes")
+            } else {
+                format!("the club holds it at {}", held.join(", "))
+            };
+            println!("  {count} of the {} lists name a club by index {common} ({common:#x}): {held}.", squad.len());
+        }
+        if let Some(&(uid, record, [begin, end, capacity])) = not_lists.first() {
+            println!(
+                "  {} records hold no list at +{:#x}: player {uid}'s holds {begin:#x} {end:#x} {capacity:#x} there. Its \
+                 first 0x60 bytes:",
+                not_lists.len(),
+                places.list
+            );
+            println!("    {}", hex(&process.read_bytes(record, 0x60)?));
+        }
+    }
+    Ok(())
+}
+
+/// `cohesion --set`: sets the cohesion of a club's senior players through the editor's checks, and with --restore puts
+/// it back and checks it is as it was.
+fn set_cohesion(session: &Session, clubs: &[u32], value: i8, restore: RestoreArgs) -> Result<()> {
+    let [uid] = clubs else { bail!("--set takes one club") };
+    ensure!(session.layout.cohesion.is_some(), "this layout does not place cohesion");
+    let players = PlayerIndex::new(session.players()?);
+    let index = ClubIndex::new(session.clubs()?);
+    let club = index.get(*uid).with_context(|| format!("no club with UID {uid}"))?;
+    let team = session.club_teams(club, &players)?.into_iter().next().context("the club has no team")?;
+    let squad: Vec<_> =
+        team.players.iter().filter(|member| member.plays_here).filter_map(|m| players.get(m.uid)).collect();
+    // Each senior player's cohesion with the club, in the team's order.
+    let read =
+        || -> Result<Vec<Option<i8>>> { squad.iter().map(|player| Ok(session.cohesion(player, club)?)).collect() };
+    let shown = |values: &[Option<i8>]| {
+        let set: Vec<f64> = values.iter().flatten().map(|&value| f64::from(value)).collect();
+        format!("mean {:.1} over {} players", set.iter().sum::<f64>() / set.len().max(1) as f64, set.len())
+    };
+    let before = read()?;
+    let mut plans = Vec::new();
+    for player in &squad {
+        plans.extend(session.plan_cohesion(player, club, value)?);
+    }
+    println!();
+    println!(
+        "Setting to {value} the cohesion of {} of {}'s senior players; {} without an entry for the club are left alone.",
+        plans.len(),
+        club.name,
+        squad.len() - plans.len()
+    );
+    let mut done = Vec::new();
+    for plan in &plans {
+        match session.apply_cohesion(plan) {
+            Ok(set) => done.push(set),
+            Err(err) => {
+                // One player at a time: those written are put back, so that it is all or nothing.
+                for set in done.iter().rev() {
+                    let _ = session.undo_cohesion(set);
+                }
+                return Err(err.into());
+            }
+        }
+    }
+    let after = read()?;
+    ensure!(after.iter().flatten().all(|&now| now == value), "the cohesion is not what was written");
+    println!("  set: {}", shown(&after));
+    if restore.restore {
+        if restore.hold > 0 {
+            println!("  putting it back in {} s", restore.hold);
+            std::thread::sleep(std::time::Duration::from_secs(restore.hold));
+        }
+        for set in done.iter().rev() {
+            session.undo_cohesion(set)?;
+        }
+        let restored = read()?;
+        ensure!(restored == before, "the cohesion is not as it was");
+        println!("  restored: {}", shown(&restored));
+    }
+    Ok(())
+}
+
 /// The addresses whose pointers `nearby` looks for, each with the index of the club or player it
 /// stands for: a club's senior team (or the club itself, with `to_club`), or a player's object and
 /// the block of his that contracts and other records point at.
@@ -6469,6 +6968,21 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn amounts_have_commas_between_thousands() {
+        assert_eq!(pounds(0), "0");
+        assert_eq!(pounds(999), "999");
+        assert_eq!(pounds(1_229), "1,229");
+        assert_eq!(pounds(236_234), "236,234");
+        assert_eq!(pounds(10_222_480), "10,222,480");
+        assert_eq!(pounds(u32::MAX), "4,294,967,295");
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
@@ -6482,5 +6996,53 @@ mod tests {
         for bytes in [&b"P15GAME_COMP_STATS\0"[..], b"N2db4LISTIiEE\0", b"N2dbE\0", b"5ABC\0", b"2AB3CD\0", b"name\0"] {
             assert_eq!(demangle(bytes), None, "{}", String::from_utf8_lossy(bytes));
         }
+    }
+}
+
+#[cfg(test)]
+mod cohesion_tests {
+    use super::*;
+
+    /// Kobbie Mainoo's list of cohesion entries as read on the macOS Steam save (25 July 2026): Manchester United
+    /// (index 0x198) at 91 and England (0x8B) at 71.
+    const MAINOO: &str = "98010000015b00008b00000002470000";
+
+    fn bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hexadecimal")).collect()
+    }
+
+    #[test]
+    fn an_entry_is_an_index_a_kind_and_a_value() {
+        assert_eq!(
+            cohesion_entries(&bytes(MAINOO)),
+            vec![
+                CohesionEntry { index: 0x198, kind: COHESION_CLUB, value: 91 },
+                CohesionEntry { index: 0x8B, kind: 2, value: 71 },
+            ]
+        );
+        // The value is an `i8`.
+        assert_eq!(cohesion_entries(&bytes("0100000001ff0000"))[0].value, -1);
+        // Bytes short of a whole entry are left out.
+        assert!(cohesion_entries(&bytes("98010000015b00")).is_empty());
+    }
+
+    #[test]
+    fn a_list_is_whole_entries_within_its_capacity() {
+        let begin = 0x6000_0000_1000;
+        assert!(is_cohesion_list(0, 0, 0));
+        assert!(is_cohesion_list(begin, begin, begin));
+        assert!(is_cohesion_list(begin, begin + 16, begin + 32));
+        assert!(!is_cohesion_list(begin, begin + 12, begin + 32), "not whole entries");
+        assert!(!is_cohesion_list(begin, begin + 40, begin + 32), "past its capacity");
+        assert!(!is_cohesion_list(begin + 3, begin + 19, begin + 35), "not a pointer");
+        assert!(!is_cohesion_list(begin, begin + 8 * 501, begin + 8 * 501), "longer than any");
+    }
+
+    #[test]
+    fn the_index_most_lists_name_is_the_clubs() {
+        let named = BTreeMap::from([(0x8B, 3), (0x198, 24), (0x1A2, 2)]);
+        assert_eq!(most_named(&named), Some((0x198, 24)));
+        assert_eq!(most_named(&BTreeMap::from([(7, 2), (5, 2)])), Some((5, 2)));
+        assert_eq!(most_named(&BTreeMap::new()), None);
     }
 }

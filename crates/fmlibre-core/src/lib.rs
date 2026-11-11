@@ -9,8 +9,10 @@ mod calibrate;
 mod clauses;
 mod clubs;
 mod coded;
+mod cohesion;
 mod date;
 mod details;
+mod diagnostics;
 mod edit;
 mod export;
 mod filter;
@@ -25,6 +27,7 @@ mod medical;
 mod object_pool;
 mod own_memory;
 mod players;
+mod prize_money;
 mod profile;
 mod relations;
 mod retirement;
@@ -51,11 +54,13 @@ pub use clubs::{
     ClubDetails, ClubIndex, ClubSummary, Finances, SUPPORTER_MIX, SUPPORTER_TRAITS, read_club_details, read_clubs,
 };
 pub use coded::Coded;
+pub use cohesion::{COHESION_RANGE, CohesionPlan, CohesionSet};
 pub use date::FmDate;
 pub use details::{
     ATTRIBUTE_GROUPS, Attribute, Clause, Contract, International, PERSONALITY, POSITIONS, PlayerDetails, Reputation,
     read_player_details,
 };
+pub use diagnostics::{date_line, diagnostics_report, retirement_line};
 pub use edit::{Change, EditError, Entity, Field, Kind, LOAN_EXPIRES, LOAN_OPTION_FEE, Scale, Target, fields};
 pub use export::{ExportFormat, ExportHeader, Exported};
 pub use filter::{
@@ -74,6 +79,9 @@ pub use mass::{Operation, Plan, Planned, Skipped};
 pub use medical::{Ban, HealPlan, Healed, Injury, LiftPlan, Lifted};
 pub use object_pool::ObjectPool;
 pub use players::{Nation, PLAYABLE_RATING, PlayerIndex, PlayerSummary, is_woman, nations, read_players};
+pub use prize_money::{
+    Competition, MOST_PRIZE, PrizeAmount, PrizeChange, PrizeEdit, PrizeError, PrizeMoney, PrizeStage,
+};
 pub use profile::{
     ArrayRvas, BuildProfile, ContractLayout, Layout, PlayerLayout, PluginFingerprint, ProfileNotes, SelectionLayout,
     StaffLayout, TacticLayout, built_in_profiles, layout_for, profile_for, profile_text,
