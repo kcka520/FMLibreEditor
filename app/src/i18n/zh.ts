@@ -304,7 +304,8 @@ export const zh: Strings = {
     "contract.squad_status": "球队地位", "contract.transfer_listed": "列入转会名单", "contract.loan_listed": "列入租借名单",
     "loan.expires": "租借到期", "loan.option_fee": "买断金额", "contract.job": "职务",
     "tie.nationality": "第二国籍", "tie.trainedInNation": "青训所在国", "tie.trainedAtClub": "青训所在俱乐部",
-    "tie.workPermit": "工作许可豁免", club: "俱乐部", injuries: "伤病", bans: "停赛", retirement: "退役",
+    "tie.workPermit": "工作许可豁免", club: "俱乐部", injuries: "伤病", cohesion: "凝聚力", bans: "停赛",
+    retirement: "退役",
     clause: "合同条款", "clause.amount": "条款金额", "clause.condition": "条款条件",
     captain: "队长", vice_captain: "副队长", reputation: "声望",
     "facilities.training": "训练设施", "facilities.youth_facilities": "青年训练营",
@@ -640,15 +641,25 @@ export const zh: Strings = {
     reloadHint: "如果存档仍在加载中，请重新读取数据后再次校验。",
     noDate: "游戏内日期未通过校验，因此不显示年龄。",
     failed: (names: string) => `保持只读：${names}。`,
+    failedCheck: (name: string, fit: number, sampled: number) =>
+      `${name}（符合 ${format(fit)} / ${format(sampled)}）`,
     join: (names: string[]) =>
       names.length <= 1 ? names.join("") : `${names.slice(0, -1).join("、")}和${names[names.length - 1]}`,
     allow: "依然编辑", allowTitle: "在关闭或重新连接前保持编辑开启。请先备份存档。",
+  },
+
+  diagnostics: {
+    copy: "复制诊断信息",
+    copyTitle: "复制 FMLibreEditor 在游戏中读取到的内容，方便粘贴到错误报告中。其中不含姓名和路径。",
+    copied: "已复制",
+    failed: (reason: string) => `无法复制诊断信息：${reason}`,
   },
 
   checks: {
     gameDate: "游戏内日期", players: "球员详情", positions: "位置", attributes: "属性",
     personality: "个性", liveValues: "体能、比赛状态、疲劳与士气",
     contracts: "合同", teams: "球队", staff: "工作人员", clubs: "俱乐部",
+    cohesion: "与俱乐部的凝聚力",
   } satisfies Record<CheckKey, string>,
 
   update: {
@@ -1055,6 +1066,13 @@ export const zh: Strings = {
     liftAllTitle: "立即解除本队所有球员的所有停赛", liftNone: "本队没有停赛球员",
     inspireAll: "全员鼓舞",
     inspireAllTitle: "把本队所有球员的士气调到 20（最高）并移除所有不满原因",
+    maxCohesion: "全员凝聚力最大化",
+    maxCohesionTitle:
+      "把本队所有球员与俱乐部的凝聚力调到 100（最高）。游戏推进一次后会在‘动态’页面显示球队凝聚力：在游戏内按继续",
+    cohesionNone:
+      "编辑器无法读取本队的凝聚力：此版本游戏尚未做过相应校验，或本队球员都没有与俱乐部的凝聚力记录",
+    cohesionWithout: (count: number) =>
+      count === 1 ? "1 名球员还没有与俱乐部的凝聚力" : `${format(count)} 名球员还没有与俱乐部的凝聚力`,
     refreshAll: "全员刷新",
     refreshAllTitle: "把本队所有球员的体能和比赛状态调到 100%，并完全休息（疲劳 -500）",
     maxAll: "全员属性最大化",
@@ -1093,13 +1111,14 @@ export const zh: Strings = {
     tableLabel: (team: string) => `${team} 的球员`, openProfile: "打开球员信息",
     columns: {
       name: "姓名", position: "位置", age: "年龄", currentAbility: "CA", potentialAbility: "PA",
-      condition: "体能", matchSharpness: "状态", jadedness: "疲劳", morale: "士气", actions: "队长",
+      condition: "体能", matchSharpness: "状态", jadedness: "疲劳", morale: "士气", cohesion: "凝聚力",
+      actions: "队长",
     } satisfies Record<SquadSort | "actions", string>,
     sortBy: (by: string) => `按 ${by} 排序`,
     sortNames: {
       name: "姓名", position: "位置", age: "年龄", currentAbility: "当前能力",
       potentialAbility: "潜在能力", condition: "体能", matchSharpness: "状态",
-      jadedness: "疲劳", morale: "士气",
+      jadedness: "疲劳", morale: "士气", cohesion: "凝聚力",
     } satisfies Record<SquadSort, string>,
     injured: "有伤", injuredTitle: (count: number) => count === 1 ? "1 项伤病" : `${format(count)} 项伤病`,
     banned: "停赛", bannedTitle: (count: number) => count === 1 ? "1 场停赛" : `${format(count)} 场停赛`,
